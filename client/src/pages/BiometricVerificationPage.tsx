@@ -95,6 +95,10 @@ const BiometricVerificationPage = () => {
   const earHistoryRef = useRef<number[]>([]);
   const nosePositionsRef = useRef<{ x: number; y: number }[]>([]);
   const [motionConfirmed, setMotionConfirmed] = useState(false);
+  // Random head-turn challenge (a flat photo cannot turn its head on command)
+  const [challengeDir] = useState<'left' | 'right'>(() => (Math.random() < 0.5 ? 'left' : 'right'));
+  const [turnDone, setTurnDone] = useState(false);
+  const sawFrontalRef = useRef(false);
   const [staticWarning, setStaticWarning] = useState(false);
   const staticFrameCountRef = useRef(0);
 
@@ -289,6 +293,20 @@ const BiometricVerificationPage = () => {
                   });
                 }
 
+                // 1b. Head-turn challenge: yaw ratio of nose between the jaw edges (0 = right edge, 16 = left edge)
+                {
+                  const pts = landmarks.positions;
+                  const jawSpan = pts[16].x - pts[0].x;
+                  if (jawSpan > 20) {
+                    const yaw = (pts[30].x - pts[0].x) / jawSpan; // ~0.5 facing the camera
+                    if (yaw > 0.42 && yaw < 0.58) sawFrontalRef.current = true;
+                    // Camera image is mirrored on screen: low ratio = user's right, high ratio = user's left
+                    if (sawFrontalRef.current && (challengeDir === 'right' ? yaw < 0.32 : yaw > 0.68)) {
+                      setTurnDone(true);
+                    }
+                  }
+                }
+
                 // 2. Track 3D head movement to reject printed 2D static photos
                 const nosePos = landmarks.positions[30];
                 const hist = nosePositionsRef.current;
@@ -381,7 +399,7 @@ const BiometricVerificationPage = () => {
         window.cancelAnimationFrame(animationFrameId);
       }
     };
-  }, [cameraActive, engineLoading, currentStep, verificationStatus, blinkCount]);
+  }, [cameraActive, engineLoading, currentStep, verificationStatus, blinkCount, challengeDir]);
 
   // 5. VERIFY FACE (Compare live webcam face against administrator-enrolled descriptor)
   const handleVerifyFace = async () => {
@@ -397,10 +415,10 @@ const BiometricVerificationPage = () => {
     }
 
     // Anti-Spoofing Liveness Enforcement
-    const isLive = (blinkCount > 0 || motionConfirmed) && !staticWarning;
+    const isLive = blinkCount > 0 && turnDone && !staticWarning;
     if (!isLive) {
       setToast({
-        message: 'Anti-Spoofing Check: Please blink your eyes naturally or turn your head slightly to confirm live human presence.',
+        message: `Anti-Spoofing Check: blink your eyes AND turn your head to your ${challengeDir} to prove you are a live person.`,
         type: 'info'
       });
       return;
@@ -722,8 +740,8 @@ const BiometricVerificationPage = () => {
                     <Eye size={16} color="#06b6d4" />
                     <span style={{ fontWeight: 600 }}>Anti-Spoofing Liveness Engine:</span>
                   </div>
-                  <div className={`liveness-badge ${(blinkCount > 0 || motionConfirmed) && !staticWarning ? 'passed' : staticWarning ? 'failed' : 'waiting'}`}>
-                    {(blinkCount > 0 || motionConfirmed) && !staticWarning ? (
+                  <div className={`liveness-badge ${(blinkCount > 0 && turnDone) && !staticWarning ? 'passed' : staticWarning ? 'failed' : 'waiting'}`}>
+                    {(blinkCount > 0 && turnDone) && !staticWarning ? (
                       <>
                         <CheckCircle2 size={13} color="#10b981" />
                         <span>Live Human Subject Certified</span>
@@ -762,15 +780,15 @@ const BiometricVerificationPage = () => {
                     fontSize: '0.78rem',
                     padding: '0.2rem 0.55rem',
                     borderRadius: '6px',
-                    background: motionConfirmed ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-                    color: motionConfirmed ? '#10b981' : '#94a3b8',
+                    background: turnDone ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                    color: turnDone ? '#10b981' : '#94a3b8',
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: '0.35rem',
-                    border: `1px solid ${motionConfirmed ? 'rgba(16, 185, 129, 0.3)' : 'rgba(255, 255, 255, 0.08)'}`
+                    border: `1px solid ${turnDone ? 'rgba(16, 185, 129, 0.3)' : 'rgba(255, 255, 255, 0.08)'}`
                   }}>
-                    {motionConfirmed ? <CheckCircle2 size={12} color="#10b981" /> : <RefreshCw size={12} />}
-                    3D Motion: {motionConfirmed ? 'Natural Movement Confirmed ✓' : 'Turn head slightly'}
+                    {turnDone ? <CheckCircle2 size={12} color="#10b981" /> : <RefreshCw size={12} />}
+                    Head Turn: {turnDone ? 'Completed ✓' : `Turn your head to your ${challengeDir}`}
                   </span>
                 </div>
               </div>
