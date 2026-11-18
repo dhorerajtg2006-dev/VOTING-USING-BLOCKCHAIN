@@ -159,76 +159,30 @@ export const closeElection = async (req: Request, res: Response) => {
   const adminId = (req as any).user.id;
   const role = (req as any).user.role;
   const electionId = req.params.id;
-  const isSuperAdmin = role === 'super_admin';
-
-  const connection = await pool.getConnection();
-
   try {
-    await connection.beginTransaction();
-
+    const isSuperAdmin = role === 'super_admin';
     const query = isSuperAdmin
-      ? 'SELECT id, status, room_number FROM election_rooms WHERE id = ? FOR UPDATE'
-      : 'SELECT id, status, room_number FROM election_rooms WHERE id = ? AND admin_id = ? FOR UPDATE';
-
+      ? 'SELECT status, room_number FROM election_rooms WHERE id = ?'
+      : 'SELECT status, room_number FROM election_rooms WHERE id = ? AND admin_id = ?';
     const params = isSuperAdmin ? [electionId] : [electionId, adminId];
-    const [rows]: any = await connection.query(query, params);
-
-    if (rows.length === 0) {
-      await connection.rollback();
-      return res.status(404).json({
-        message: 'Election not found or access denied'
-      });
+    const [rows]: any = await pool.query(query, params);
+    if (rows.length === 0) return res.status(404).json({ message: 'Election not found or access denied' });
+    if (rows[0].status === 'closed' || rows[0].status === 'published') {
+      return res.status(400).json({ message: 'Election is already closed' });
     }
 
-    const election = rows[0];
+    await pool.query('UPDATE election_rooms SET status = ? WHERE id = ?', ['closed', electionId]);
 
-    if (election.status === 'published') {
-      await connection.rollback();
-      return res.status(400).json({
-        message: 'Results are already published'
-      });
-    }
-
-    if (election.status === 'closed') {
-      await connection.rollback();
-      return res.json({
-        message: 'Election is already closed'
-      });
-    }
-
-    await connection.query(
-      'UPDATE election_rooms SET status = ? WHERE id = ?',
-      ['closed', electionId]
+    // Audit log
+    await pool.query(
+      'INSERT INTO audit_logs (admin_id, election_id, action, details, ip_address) VALUES (?, ?, ?, ?, ?)',
+      [adminId, electionId, 'ELECTION_CLOSED', `Election ${rows[0].room_number} closed early by administrator`, req.ip]
     );
 
-    await connection.query(
-      `INSERT INTO audit_logs
-       (admin_id, election_id, action, details, ip_address)
-       VALUES (?, ?, ?, ?, ?)`,
-      [
-        adminId,
-        electionId,
-        'ELECTION_CLOSED',
-        `Election ${election.room_number} closed by administrator`,
-        req.ip
-      ]
-    );
-
-    await connection.commit();
-
-    return res.json({
-      message: 'Election closed successfully',
-      status: 'closed'
-    });
+    res.json({ message: 'Election closed successfully' });
   } catch (error) {
-    await connection.rollback();
     console.error('Close election error:', error);
-
-    return res.status(500).json({
-      message: 'Failed to close election'
-    });
-  } finally {
-    connection.release();
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -236,82 +190,44 @@ export const publishResults = async (req: Request, res: Response) => {
   const adminId = (req as any).user.id;
   const role = (req as any).user.role;
   const electionId = req.params.id;
-  const isSuperAdmin = role === 'super_admin';
-
-  const connection = await pool.getConnection();
-
   try {
-    await connection.beginTransaction();
-
+    const isSuperAdmin = role === 'super_admin';
     const query = isSuperAdmin
-      ? 'SELECT id, status, room_number, end_time, results_published FROM election_rooms WHERE id = ? FOR UPDATE'
-      : 'SELECT id, status, room_number, end_time, results_published FROM election_rooms WHERE id = ? AND admin_id = ? FOR UPDATE';
-
+      ? 'SELECT status, room_number, end_time FROM election_rooms WHERE id = ?'
+      : 'SELECT status, room_number, end_time FROM election_rooms WHERE id = ? AND admin_id = ?';
     const params = isSuperAdmin ? [electionId] : [electionId, adminId];
-    const [rows]: any = await connection.query(query, params);
-
-    if (rows.length === 0) {
-      await connection.rollback();
-      return res.status(404).json({
-        message: 'Election not found or access denied'
-      });
-    }
+    const [rows]: any = await pool.query(query, params);
+    if (rows.length === 0) return res.status(404).json({ message: 'Election not found or access denied' });
 
     const election = rows[0];
-
-    if (election.status === 'published' || election.results_published) {
-      await connection.rollback();
-      return res.json({
-        message: 'Results are already published',
-        status: 'published'
-      });
-    }
-
-    const endTime = new Date(election.end_time);
     const now = new Date();
+    const endTime = new Date(election.end_time);
 
+    // Allow publishing only if election is closed OR end time has passed
     if (election.status !== 'closed' && now < endTime) {
-      await connection.rollback();
       return res.status(400).json({
-        message: 'Election must be closed or its scheduled end time must have passed'
+        message: 'Results can only be published after the election is closed or its end time has passed'
       });
     }
 
-    await connection.query(
+    await pool.query(
       'UPDATE election_rooms SET status = ?, results_published = 1 WHERE id = ?',
       ['published', electionId]
     );
 
-    await connection.query(
-      `INSERT INTO audit_logs
-       (admin_id, election_id, action, details, ip_address)
-       VALUES (?, ?, ?, ?, ?)`,
-      [
-        adminId,
-        electionId,
-        'RESULTS_PUBLISHED',
-        `Results published for election ${election.room_number}`,
-        req.ip
-      ]
+    // Audit log
+    await pool.query(
+      'INSERT INTO audit_logs (admin_id, election_id, action, details, ip_address) VALUES (?, ?, ?, ?, ?)',
+      [adminId, electionId, 'RESULTS_PUBLISHED', `Results published for election ${election.room_number}`, req.ip]
     );
 
-    await connection.commit();
-
+    // Notify connected voters via Socket.IO
     emitResultsPublished(election.room_number);
 
-    return res.json({
-      message: 'Results published successfully',
-      status: 'published'
-    });
+    res.json({ message: 'Results published successfully' });
   } catch (error) {
-    await connection.rollback();
     console.error('Publish results error:', error);
-
-    return res.status(500).json({
-      message: 'Failed to publish results'
-    });
-  } finally {
-    connection.release();
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
