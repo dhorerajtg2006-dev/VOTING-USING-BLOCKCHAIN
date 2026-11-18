@@ -26,6 +26,14 @@ import './Biometric.css';
 // Calibrated Euclidean distance threshold for high-security voting (<= 0.54 is genuine match)
 const MATCH_THRESHOLD = 0.54;
 
+// base64url helpers for WebAuthn credential ids
+const bytesToB64url = (bytes: Uint8Array) =>
+  btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const b64urlToBytes = (s: string) => {
+  const b64 = s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4);
+  return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+};
+
 // Helper: 2D Euclidean distance between landmark points
 const dist2D = (p1: { x: number; y: number }, p2: { x: number; y: number }) => {
   return Math.hypot(p1.x - p2.x, p1.y - p2.y);
@@ -473,26 +481,92 @@ const BiometricVerificationPage = () => {
 
     try {
       let webAuthnAssertion: any = null;
+      let sensorAvailable = false;
 
-      if (window.PublicKeyCredential && typeof navigator.credentials?.get === 'function') {
+      // WebAuthn only exists in a secure context (https:// or http://localhost)
+      if (window.isSecureContext && window.PublicKeyCredential && typeof navigator.credentials?.get === 'function') {
         try {
-          const challenge = new Uint8Array(32);
-          window.crypto.getRandomValues(challenge);
-
-          webAuthnAssertion = await navigator.credentials.get({
-            publicKey: {
-              challenge,
-              timeout: 60000,
-              userVerification: 'preferred',
-              rpId: window.location.hostname
-            }
-          });
-        } catch (webAuthnErr) {
-          console.warn('Native WebAuthn fallback to certified biometric assertion:', webAuthnErr);
+          sensorAvailable =
+            await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+        } catch {
+          sensorAvailable = false;
         }
       }
 
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (sensorAvailable) {
+        const challenge = new Uint8Array(32);
+        window.crypto.getRandomValues(challenge);
+        const storageKey = `votex_passkey_${voterInfo?.voterId || 'unknown'}`;
+        let storedCredId: string | null = null;
+        try { storedCredId = localStorage.getItem(storageKey); } catch { /* storage unavailable */ }
+
+        try {
+          if (storedCredId) {
+            // Returning on this device: ask for the fingerprint / Face ID / Windows Hello
+            webAuthnAssertion = await navigator.credentials.get({
+              publicKey: {
+                challenge,
+                timeout: 60000,
+                userVerification: 'required',
+                rpId: window.location.hostname,
+                allowCredentials: [{ type: 'public-key', id: b64urlToBytes(storedCredId) }]
+              }
+            });
+          } else {
+            // First time on this device: there is no passkey yet, so create one.
+            // (credentials.get with no registered credential just hangs / shows nothing.)
+            webAuthnAssertion = await navigator.credentials.create({
+              publicKey: {
+                challenge,
+                rp: { name: 'VoteX', id: window.location.hostname },
+                user: {
+                  id: new TextEncoder().encode(String(voterInfo?.voterId || 'voter')),
+                  name: String(voterInfo?.voterId || 'voter'),
+                  displayName: String(voterInfo?.fullName || 'Voter')
+                },
+                pubKeyCredParams: [
+                  { type: 'public-key', alg: -7 },   // ES256
+                  { type: 'public-key', alg: -257 }  // RS256 (Windows Hello)
+                ],
+                authenticatorSelection: {
+                  authenticatorAttachment: 'platform',
+                  userVerification: 'required',
+                  residentKey: 'preferred'
+                },
+                timeout: 60000,
+                attestation: 'none'
+              }
+            });
+            if (webAuthnAssertion?.rawId) {
+              try { localStorage.setItem(storageKey, bytesToB64url(new Uint8Array(webAuthnAssertion.rawId))); } catch { /* ignore */ }
+            }
+          }
+        } catch (webAuthnErr: any) {
+          // User cancelled / sensor failed: do NOT silently pass the fingerprint step.
+          console.warn('WebAuthn fingerprint prompt failed:', webAuthnErr);
+          // A stale stored credential (e.g. passkey deleted) should be re-created next try.
+          if (storedCredId && webAuthnErr?.name !== 'NotAllowedError') {
+            try { localStorage.removeItem(storageKey); } catch { /* ignore */ }
+          }
+          setFpStatus('error');
+          setErrorMessage(
+            webAuthnErr?.name === 'NotAllowedError'
+              ? 'Fingerprint prompt was cancelled or timed out. Tap Retry and complete the fingerprint / screen-lock prompt.'
+              : `Fingerprint sensor error: ${webAuthnErr?.message || webAuthnErr?.name || 'unknown'}`
+          );
+          return;
+        }
+      } else {
+        // No usable sensor (insecure http:// origin, or device without fingerprint/screen lock).
+        // The server runs in DEMO_MODE, so continue with the demo fallback but tell the user.
+        console.warn('No platform authenticator available; using demo fingerprint fallback.');
+        setToast({
+          message: 'No fingerprint sensor available here (needs https:// or localhost, plus a device fingerprint/PIN). Using demo fallback.',
+          type: 'info'
+        });
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       // Authoritative Server-Side Verification:
       // The server independently computes Euclidean distance against MySQL/AlaSQL database
