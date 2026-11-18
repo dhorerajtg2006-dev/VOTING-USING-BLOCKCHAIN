@@ -42,6 +42,9 @@ const LandingPage: React.FC = () => {
             <Link to="/voter/login" className="btn btn-primary full-width">
               Voter Login
             </Link>
+            <Link to="/voter/register" className="btn btn-secondary full-width" style={{ marginTop: '0.5rem' }}>
+              Register as Voter
+            </Link>
           </div>
         </div>
       </div>

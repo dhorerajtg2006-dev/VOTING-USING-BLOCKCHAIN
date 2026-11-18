@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   adminLogin,
   voterLogin,
+  voterRegister,
   logout,
   getMe
 } from '../controllers/authController';
@@ -13,6 +14,7 @@ const router = Router();
 // Authentication
 router.post('/admin/login', strictLimiter, adminLogin);
 router.post('/voter/login', strictLimiter, voterLogin);
+router.post('/voter/register', strictLimiter, voterRegister);
 router.post('/logout', logout);
 router.get('/me', verifyToken, getMe);
 
