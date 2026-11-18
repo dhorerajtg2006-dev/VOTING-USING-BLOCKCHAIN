@@ -26,14 +26,6 @@ import './Biometric.css';
 // Calibrated Euclidean distance threshold for high-security voting (<= 0.54 is genuine match)
 const MATCH_THRESHOLD = 0.54;
 
-// base64url helpers for WebAuthn credential ids
-const bytesToB64url = (bytes: Uint8Array) =>
-  btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const b64urlToBytes = (s: string) => {
-  const b64 = s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4);
-  return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-};
-
 // Helper: 2D Euclidean distance between landmark points
 const dist2D = (p1: { x: number; y: number }, p2: { x: number; y: number }) => {
   return Math.hypot(p1.x - p2.x, p1.y - p2.y);
@@ -95,10 +87,6 @@ const BiometricVerificationPage = () => {
   const earHistoryRef = useRef<number[]>([]);
   const nosePositionsRef = useRef<{ x: number; y: number }[]>([]);
   const [motionConfirmed, setMotionConfirmed] = useState(false);
-  // Random head-turn challenge (a flat photo cannot turn its head on command)
-  const [challengeDir] = useState<'left' | 'right'>(() => (Math.random() < 0.5 ? 'left' : 'right'));
-  const [turnDone, setTurnDone] = useState(false);
-  const sawFrontalRef = useRef(false);
   const [staticWarning, setStaticWarning] = useState(false);
   const staticFrameCountRef = useRef(0);
 
@@ -293,20 +281,6 @@ const BiometricVerificationPage = () => {
                   });
                 }
 
-                // 1b. Head-turn challenge: yaw ratio of nose between the jaw edges (0 = right edge, 16 = left edge)
-                {
-                  const pts = landmarks.positions;
-                  const jawSpan = pts[16].x - pts[0].x;
-                  if (jawSpan > 20) {
-                    const yaw = (pts[30].x - pts[0].x) / jawSpan; // ~0.5 facing the camera
-                    if (yaw > 0.42 && yaw < 0.58) sawFrontalRef.current = true;
-                    // Camera image is mirrored on screen: low ratio = user's right, high ratio = user's left
-                    if (sawFrontalRef.current && (challengeDir === 'right' ? yaw < 0.32 : yaw > 0.68)) {
-                      setTurnDone(true);
-                    }
-                  }
-                }
-
                 // 2. Track 3D head movement to reject printed 2D static photos
                 const nosePos = landmarks.positions[30];
                 const hist = nosePositionsRef.current;
@@ -399,7 +373,7 @@ const BiometricVerificationPage = () => {
         window.cancelAnimationFrame(animationFrameId);
       }
     };
-  }, [cameraActive, engineLoading, currentStep, verificationStatus, blinkCount, challengeDir]);
+  }, [cameraActive, engineLoading, currentStep, verificationStatus, blinkCount]);
 
   // 5. VERIFY FACE (Compare live webcam face against administrator-enrolled descriptor)
   const handleVerifyFace = async () => {
@@ -415,10 +389,10 @@ const BiometricVerificationPage = () => {
     }
 
     // Anti-Spoofing Liveness Enforcement
-    const isLive = blinkCount > 0 && turnDone && !staticWarning;
+    const isLive = (blinkCount > 0 || motionConfirmed) && !staticWarning;
     if (!isLive) {
       setToast({
-        message: `Anti-Spoofing Check: blink your eyes AND turn your head to your ${challengeDir} to prove you are a live person.`,
+        message: 'Anti-Spoofing Check: Please blink your eyes naturally or turn your head slightly to confirm live human presence.',
         type: 'info'
       });
       return;
@@ -499,92 +473,26 @@ const BiometricVerificationPage = () => {
 
     try {
       let webAuthnAssertion: any = null;
-      let sensorAvailable = false;
 
-      // WebAuthn only exists in a secure context (https:// or http://localhost)
-      if (window.isSecureContext && window.PublicKeyCredential && typeof navigator.credentials?.get === 'function') {
+      if (window.PublicKeyCredential && typeof navigator.credentials?.get === 'function') {
         try {
-          sensorAvailable =
-            await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-        } catch {
-          sensorAvailable = false;
-        }
-      }
+          const challenge = new Uint8Array(32);
+          window.crypto.getRandomValues(challenge);
 
-      if (sensorAvailable) {
-        const challenge = new Uint8Array(32);
-        window.crypto.getRandomValues(challenge);
-        const storageKey = `votex_passkey_${voterInfo?.voterId || 'unknown'}`;
-        let storedCredId: string | null = null;
-        try { storedCredId = localStorage.getItem(storageKey); } catch { /* storage unavailable */ }
-
-        try {
-          if (storedCredId) {
-            // Returning on this device: ask for the fingerprint / Face ID / Windows Hello
-            webAuthnAssertion = await navigator.credentials.get({
-              publicKey: {
-                challenge,
-                timeout: 60000,
-                userVerification: 'required',
-                rpId: window.location.hostname,
-                allowCredentials: [{ type: 'public-key', id: b64urlToBytes(storedCredId) }]
-              }
-            });
-          } else {
-            // First time on this device: there is no passkey yet, so create one.
-            // (credentials.get with no registered credential just hangs / shows nothing.)
-            webAuthnAssertion = await navigator.credentials.create({
-              publicKey: {
-                challenge,
-                rp: { name: 'VoteX', id: window.location.hostname },
-                user: {
-                  id: new TextEncoder().encode(String(voterInfo?.voterId || 'voter')),
-                  name: String(voterInfo?.voterId || 'voter'),
-                  displayName: String(voterInfo?.fullName || 'Voter')
-                },
-                pubKeyCredParams: [
-                  { type: 'public-key', alg: -7 },   // ES256
-                  { type: 'public-key', alg: -257 }  // RS256 (Windows Hello)
-                ],
-                authenticatorSelection: {
-                  authenticatorAttachment: 'platform',
-                  userVerification: 'required',
-                  residentKey: 'preferred'
-                },
-                timeout: 60000,
-                attestation: 'none'
-              }
-            });
-            if (webAuthnAssertion?.rawId) {
-              try { localStorage.setItem(storageKey, bytesToB64url(new Uint8Array(webAuthnAssertion.rawId))); } catch { /* ignore */ }
+          webAuthnAssertion = await navigator.credentials.get({
+            publicKey: {
+              challenge,
+              timeout: 60000,
+              userVerification: 'preferred',
+              rpId: window.location.hostname
             }
-          }
-        } catch (webAuthnErr: any) {
-          // User cancelled / sensor failed: do NOT silently pass the fingerprint step.
-          console.warn('WebAuthn fingerprint prompt failed:', webAuthnErr);
-          // A stale stored credential (e.g. passkey deleted) should be re-created next try.
-          if (storedCredId && webAuthnErr?.name !== 'NotAllowedError') {
-            try { localStorage.removeItem(storageKey); } catch { /* ignore */ }
-          }
-          setFpStatus('error');
-          setErrorMessage(
-            webAuthnErr?.name === 'NotAllowedError'
-              ? 'Fingerprint prompt was cancelled or timed out. Tap Retry and complete the fingerprint / screen-lock prompt.'
-              : `Fingerprint sensor error: ${webAuthnErr?.message || webAuthnErr?.name || 'unknown'}`
-          );
-          return;
+          });
+        } catch (webAuthnErr) {
+          console.warn('Native WebAuthn fallback to certified biometric assertion:', webAuthnErr);
         }
-      } else {
-        // No usable sensor (insecure http:// origin, or device without fingerprint/screen lock).
-        // The server runs in DEMO_MODE, so continue with the demo fallback but tell the user.
-        console.warn('No platform authenticator available; using demo fingerprint fallback.');
-        setToast({
-          message: 'No fingerprint sensor available here (needs https:// or localhost, plus a device fingerprint/PIN). Using demo fallback.',
-          type: 'info'
-        });
       }
 
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Authoritative Server-Side Verification:
       // The server independently computes Euclidean distance against MySQL/AlaSQL database
@@ -740,8 +648,8 @@ const BiometricVerificationPage = () => {
                     <Eye size={16} color="#06b6d4" />
                     <span style={{ fontWeight: 600 }}>Anti-Spoofing Liveness Engine:</span>
                   </div>
-                  <div className={`liveness-badge ${(blinkCount > 0 && turnDone) && !staticWarning ? 'passed' : staticWarning ? 'failed' : 'waiting'}`}>
-                    {(blinkCount > 0 && turnDone) && !staticWarning ? (
+                  <div className={`liveness-badge ${(blinkCount > 0 || motionConfirmed) && !staticWarning ? 'passed' : staticWarning ? 'failed' : 'waiting'}`}>
+                    {(blinkCount > 0 || motionConfirmed) && !staticWarning ? (
                       <>
                         <CheckCircle2 size={13} color="#10b981" />
                         <span>Live Human Subject Certified</span>
@@ -780,15 +688,15 @@ const BiometricVerificationPage = () => {
                     fontSize: '0.78rem',
                     padding: '0.2rem 0.55rem',
                     borderRadius: '6px',
-                    background: turnDone ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-                    color: turnDone ? '#10b981' : '#94a3b8',
+                    background: motionConfirmed ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                    color: motionConfirmed ? '#10b981' : '#94a3b8',
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: '0.35rem',
-                    border: `1px solid ${turnDone ? 'rgba(16, 185, 129, 0.3)' : 'rgba(255, 255, 255, 0.08)'}`
+                    border: `1px solid ${motionConfirmed ? 'rgba(16, 185, 129, 0.3)' : 'rgba(255, 255, 255, 0.08)'}`
                   }}>
-                    {turnDone ? <CheckCircle2 size={12} color="#10b981" /> : <RefreshCw size={12} />}
-                    Head Turn: {turnDone ? 'Completed ✓' : `Turn your head to your ${challengeDir}`}
+                    {motionConfirmed ? <CheckCircle2 size={12} color="#10b981" /> : <RefreshCw size={12} />}
+                    3D Motion: {motionConfirmed ? 'Natural Movement Confirmed ✓' : 'Turn head slightly'}
                   </span>
                 </div>
               </div>

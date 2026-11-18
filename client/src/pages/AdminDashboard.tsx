@@ -64,6 +64,30 @@ const AdminDashboard = () => {
     }
   };
 
+  // Close an election and refresh the dashboard
+  const handleCloseElection = async (id: string) => {
+    if (!window.confirm('Are you sure you want to end/close this election? Voting will stop.')) return;
+    try {
+      const res: any = await electionsApi.closeElection(id);
+      setToast({ message: res.message || 'Election closed successfully', type: 'success' });
+      loadElections();
+    } catch (err: any) {
+      setToast({ message: err.message || 'Failed to close election', type: 'error' });
+    }
+  };
+
+  // Publish official election results
+  const handlePublishResults = async (id: string) => {
+    if (!window.confirm('Publish the official results for this election?')) return;
+    try {
+      const res: any = await electionsApi.publishResults(id);
+      setToast({ message: res.message || 'Results published successfully', type: 'success' });
+      loadElections();
+    } catch (err: any) {
+      setToast({ message: err.message || 'Failed to publish results', type: 'error' });
+    }
+  };
+
   // Copy room code
   const handleCopy = (code: string) => {
     navigator.clipboard.writeText(code);
@@ -306,6 +330,26 @@ const AdminDashboard = () => {
                       </td>
                       <td style={{ textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end', alignItems: 'center' }}>
+                          {el.status === 'active' && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={() => handleCloseElection(String(el.id))}
+                              style={{ padding: '0.3rem 0.6rem', fontSize: '0.8rem', borderColor: '#ef4444', color: '#ef4444' }}
+                            >
+                              End Election
+                            </button>
+                          )}
+                          {el.status === 'closed' && (
+                            <button
+                              type="button"
+                              className="btn btn-primary"
+                              onClick={() => handlePublishResults(String(el.id))}
+                              style={{ padding: '0.3rem 0.6rem', fontSize: '0.8rem' }}
+                            >
+                              Publish Results
+                            </button>
+                          )}
                           {el.status === 'published' && (
                             <Link 
                               to={`/results?room=${el.room_number}`} 

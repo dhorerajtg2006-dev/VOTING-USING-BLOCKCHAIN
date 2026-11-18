@@ -338,20 +338,10 @@ const VoterRegistrationPage = () => {
 
       <div className="glass-card mb-4" style={{ textAlign: 'center', padding: '2.5rem 2rem', border: '2px dashed var(--border-glass)' }}>
         <Upload size={44} color="var(--accent-cyan)" style={{ marginBottom: '0.75rem' }} />
-        <h3 style={{ marginBottom: '0.4rem' }}>Voter Self-Registration</h3>
-        <p className="text-secondary" style={{ marginBottom: '1.25rem', fontSize: '0.9rem' }}>
-          Voters enter their own details on the registration page using the room number. Then enroll each voter's ID photo below.
-        </p>
-        <code style={{ display: 'block', marginBottom: '1rem' }}>{`${window.location.origin}/voter/register`}</code>
-        <button
-          className="btn btn-secondary"
-          onClick={() => {
-            navigator.clipboard?.writeText(`${window.location.origin}/voter/register`);
-            setToast({ message: 'Registration link copied', type: 'success' });
-          }}
-        >
-          Copy Registration Link
-        </button>
+        <h3 style={{ marginBottom: '0.4rem' }}>Import Voters from CSV</h3>
+        <p className="text-secondary" style={{ marginBottom: '1.25rem', fontSize: '0.9rem' }}>Format: voter_id, full_name, email</p>
+        <input type="file" accept=".csv" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
+        <button className="btn btn-secondary" onClick={() => fileInputRef.current?.click()}>Select CSV File</button>
       </div>
 
       <div className="glass-card">

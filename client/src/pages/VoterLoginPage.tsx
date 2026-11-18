@@ -59,9 +59,6 @@ const VoterLoginPage = () => {
           </div>
           <button type="submit" className="btn btn-primary full-width mt-4" style={{ background: 'var(--gradient-emerald)'}}>Proceed to Verification</button>
         </form>
-        <p className="auth-desc" style={{ marginTop: '1rem', textAlign: 'center' }}>
-          New voter? <Link to="/voter/register">Register here</Link>
-        </p>
       </div>
     </div>
   );

@@ -54,71 +54,7 @@ export const voterLogin = async (req: Request, res: Response) => {
   }
 };
 
-// Public self-registration: a voter enters their own details for a room.
-// Face/ID-photo enrollment is still admin-only, so a self-registered voter
-// cannot vote until an administrator has enrolled and verified their photo.
-export const voterRegister = async (req: Request, res: Response) => {
-  const roomNumber = String(req.body.roomNumber || '').trim();
-  const voterId = String(req.body.voterId || '').trim();
-  const fullName = String(req.body.fullName || '').trim();
-  const email = String(req.body.email || '').trim();
-
-  if (!roomNumber || !voterId || !fullName || !email) {
-    return res.status(400).json({ message: 'Room number, voter ID, full name and email are required' });
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return res.status(400).json({ message: 'Please enter a valid email address' });
-  }
-  if (voterId.length > 100 || fullName.length > 255 || email.length > 255) {
-    return res.status(400).json({ message: 'One or more fields are too long' });
-  }
-
-  try {
-    const [rooms]: any = await pool.query('SELECT id, status FROM election_rooms WHERE room_number = ?', [roomNumber]);
-    if (rooms.length === 0) return res.status(404).json({ message: 'Room not found. Check the room number given by the administrator.' });
-    const election = rooms[0];
-    if (election.status === 'closed') {
-      return res.status(403).json({ message: 'Registration is closed for this election room' });
-    }
-
-    const [existing]: any = await pool.query('SELECT id, email FROM voters WHERE voter_id = ?', [voterId]);
-    let voterDbId: number;
-    if (existing.length > 0) {
-      // Don't let someone re-use an existing voter ID with different details
-      if (String(existing[0].email).toLowerCase() !== email.toLowerCase()) {
-        return res.status(409).json({ message: 'This Voter ID is already registered with a different email' });
-      }
-      voterDbId = existing[0].id;
-    } else {
-      const [ins]: any = await pool.query(
-        'INSERT INTO voters (voter_id, full_name, email) VALUES (?, ?, ?)',
-        [voterId, fullName, email]
-      );
-      voterDbId = ins.insertId;
-    }
-
-    const [roomCheck]: any = await pool.query(
-      'SELECT id FROM room_voters WHERE election_id = ? AND voter_id = ?',
-      [election.id, voterDbId]
-    );
-    if (roomCheck.length > 0) {
-      return res.status(409).json({ message: `Voter ${voterId} is already registered in this room. You can log in.` });
-    }
-
-    await pool.query('INSERT INTO room_voters (election_id, voter_id) VALUES (?, ?)', [election.id, voterDbId]);
-    await pool.query(
-      'INSERT INTO audit_logs (election_id, action, details, ip_address) VALUES (?, ?, ?, ?)',
-      [election.id, 'VOTER_REGISTERED', `Voter ${voterId} self-registered`, req.ip]
-    );
-
-    res.status(201).json({ message: 'Registration successful. An administrator must enroll your ID photo before you can vote.' });
-  } catch (error) {
-    console.error('Voter self-registration error:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-};
-
-export const logout =(req: Request, res: Response) => {
+export const logout = (req: Request, res: Response) => {
   res.clearCookie('votex_token');
   res.json({ message: 'Logged out successfully' });
 };

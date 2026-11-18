@@ -9,7 +9,6 @@ import VoterLayout from './components/VoterLayout';
 import LandingPage from './pages/LandingPage';
 import AdminLoginPage from './pages/AdminLoginPage';
 import VoterLoginPage from './pages/VoterLoginPage';
-import VoterSignupPage from './pages/VoterSignupPage';
 import AdminDashboard from './pages/AdminDashboard';
 import CreateElectionPage from './pages/CreateElectionPage';
 import CandidateManagementPage from './pages/CandidateManagementPage';
@@ -30,7 +29,6 @@ function App() {
           <Route path="/login" element={<LandingPage />} />
           <Route path="/admin/login" element={<AdminLoginPage />} />
           <Route path="/voter/login" element={<VoterLoginPage />} />
-          <Route path="/voter/register" element={<VoterSignupPage />} />
           <Route path="/results" element={<PublishedResultsPage />} />
           
           <Route path="/admin" element={<ProtectedRoute role="admin" />}>
