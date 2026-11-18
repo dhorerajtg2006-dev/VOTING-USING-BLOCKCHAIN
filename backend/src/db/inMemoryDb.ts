@@ -160,9 +160,7 @@ export class InMemoryDb {
     cleanSql = cleanSql.replace(/\s+FOR\s+UPDATE/gi, '');
 
     // Ensure integer ID columns handle string parameter coercion in alaSQL
-    if (!cleanSql.toUpperCase().startsWith('UPDATE')) {
-      cleanSql = cleanSql.replace(/\b([a-zA-Z0-9_]+\.)?(id|admin_id|election_id)\s*=\s*\?/gi, '$1$2 = CAST(? AS INT)');
-    }
+    cleanSql = cleanSql.replace(/\b([a-zA-Z0-9_]+\.)?(id|admin_id|election_id)\s*=\s*\?/gi, '$1$2 = CAST(? AS INT)');
 
     // Escape alaSQL aggregate keyword 'total'
     cleanSql = cleanSql.replace(/\bas\s+total\b/gi, 'as [total]');
