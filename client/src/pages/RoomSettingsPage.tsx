@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { electionsApi } from '../api/elections';
 import StatusBadge from '../components/StatusBadge';
 import Modal from '../components/Modal';
+import Toast from '../components/Toast';
 import { Trophy } from 'lucide-react';
 
 const RoomSettingsPage = () => {
@@ -12,12 +13,17 @@ const RoomSettingsPage = () => {
   const [election, setElection] = useState<any>(null);
   const [actionModal, setActionModal] = useState<'close' | 'publish' | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   const fetchElections = async () => {
-    const res = await electionsApi.getElections();
-    const data = Array.isArray(res) ? res : (res.elections || []);
-    setElections(data);
-    if (data.length > 0 && !selectedElection) setSelectedElection(data[0].id);
+    try {
+      const res = await electionsApi.getElections();
+      const data = Array.isArray(res) ? res : (res.elections || []);
+      setElections(data);
+      if (data.length > 0 && !selectedElection) setSelectedElection(data[0].id);
+    } catch (err: any) {
+      setToast({ message: err.message || 'Failed to fetch elections', type: 'error' });
+    }
   };
 
   useEffect(() => { fetchElections(); }, []);
@@ -26,6 +32,8 @@ const RoomSettingsPage = () => {
     if (selectedElection) {
       electionsApi.getElection(selectedElection).then(res => {
         setElection(res.election || res);
+      }).catch(err => {
+        setToast({ message: err.message || 'Failed to load election details', type: 'error' });
       });
     }
   }, [selectedElection]);
@@ -34,13 +42,19 @@ const RoomSettingsPage = () => {
     if (!actionModal || !selectedElection) return;
     setActionLoading(true);
     try {
-      if (actionModal === 'close') await electionsApi.closeElection(selectedElection);
-      if (actionModal === 'publish') await electionsApi.publishResults(selectedElection);
+      if (actionModal === 'close') {
+        const res: any = await electionsApi.closeElection(selectedElection);
+        setToast({ message: res.message || 'Election closed successfully', type: 'success' });
+      }
+      if (actionModal === 'publish') {
+        const res: any = await electionsApi.publishResults(selectedElection);
+        setToast({ message: res.message || 'Results published successfully', type: 'success' });
+      }
       await fetchElections();
       const res = await electionsApi.getElection(selectedElection);
       setElection(res.election || res);
-    } catch (err) {
-      // handled smoothly
+    } catch (err: any) {
+      setToast({ message: err.message || 'Action failed. Please ensure the election is closed before publishing results.', type: 'error' });
     } finally {
       setActionLoading(false);
       setActionModal(null);
@@ -51,6 +65,8 @@ const RoomSettingsPage = () => {
 
   return (
     <div className="animate-fade-up">
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', flexWrap: 'wrap', gap: '1rem' }}>
         <h1 className="heading-lg">Room Settings</h1>
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -111,6 +127,7 @@ const RoomSettingsPage = () => {
             className="btn btn-primary" 
             disabled={election.status !== 'closed'}
             onClick={() => setActionModal('publish')}
+            title={election.status !== 'closed' ? 'Election must be closed first before publishing results' : ''}
           >
             Publish Results
           </button>
