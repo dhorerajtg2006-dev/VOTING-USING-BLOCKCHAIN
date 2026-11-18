@@ -335,11 +335,17 @@ const AdminDashboard = () => {
                               type="button"
                               className="btn btn-secondary"
                               onClick={() => handleCloseElection(String(el.id))}
-                              style={{ padding: '0.3rem 0.6rem', fontSize: '0.8rem', borderColor: '#ef4444', color: '#ef4444' }}
+                              style={{
+                                padding: '0.3rem 0.6rem',
+                                fontSize: '0.8rem',
+                                borderColor: '#ef4444',
+                                color: '#ef4444'
+                              }}
                             >
                               End Election
                             </button>
                           )}
+
                           {el.status === 'closed' && (
                             <button
                               type="button"
@@ -350,17 +356,11 @@ const AdminDashboard = () => {
                               Publish Results
                             </button>
                           )}
+
                           {el.status === 'published' && (
-                            <Link 
-                              to={`/results?room=${el.room_number}`} 
-                              className="btn btn-primary" 
-                              style={{ 
-                                padding: '0.3rem 0.6rem', 
-                                fontSize: '0.8rem',
-                                background: 'linear-gradient(135deg, #ffd700 0%, #f59e0b 100%)',
-                                color: '#000',
-                                fontWeight: 700
-                              }}
+                            <Link
+                              to={`/results?room=${el.room_number}`}
+                              className="btn btn-primary"
                             >
                               🏆 Results
                             </Link>
